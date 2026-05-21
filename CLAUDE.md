@@ -2,96 +2,129 @@
 
 Guidance for AI assistants (Claude Code and similar tools) working in this repository.
 
-## Status
-
-This repository is currently empty — no source code has been committed yet. The sections below are a template. As the project takes shape, update each section so it reflects the actual code and workflows. Delete this "Status" section once the project is bootstrapped.
-
 ## Project Overview
 
 **Name:** Hyatt-checker
 
-**Purpose:** _TBD — likely a tool for checking Hyatt hotel availability, award nights, points pricing, or related reservation data. Replace this paragraph with a one-sentence description of what the tool actually does once decided._
+**Purpose:** Generate a 6-month award-pricing report for Category 1 & 2 World of
+Hyatt hotels in the United States. Output is a single HTML file with one
+section per hotel, each containing a month-by-month calendar showing the points
+cost for every night (color-coded off-peak / standard / peak / unavailable).
 
-**Primary use case:** _TBD_ (e.g., CLI script run on a schedule, web service, browser extension, notification bot).
+**Primary use case:** CLI tool run on demand (or on a schedule) to produce a
+static HTML report for a single user to browse.
 
 ## Repository Structure
 
-Once code lands, document the top-level layout here. Example shape to fill in:
-
 ```
 .
-├── src/                # Application source
-├── tests/              # Test suite
-├── scripts/            # One-off scripts and tooling
-├── .github/workflows/  # CI definitions
-└── CLAUDE.md           # This file
+├── data/
+│   └── hotels.json              # Curated list of US Cat 1 & 2 properties
+├── src/hyatt_checker/
+│   ├── __init__.py
+│   ├── __main__.py              # `python -m hyatt_checker` entry
+│   ├── cli.py                   # argparse entry point (hyatt-checker command)
+│   ├── hotels.py                # Hotel dataclass + JSON loader / filter
+│   ├── client.py                # Fetcher protocol + Mock/Live/Caching impls + award chart
+│   └── report.py                # Jinja2 HTML calendar rendering
+├── output/                      # Generated HTML reports (gitignored)
+├── .cache/                      # On-disk pricing cache (gitignored)
+├── pyproject.toml
+├── README.md
+└── CLAUDE.md
 ```
-
-Keep this section current — when a new top-level directory is added, add a one-line description here.
 
 ## Tech Stack
 
-Document the chosen stack here when picked. Examples to record:
-
-- **Language & runtime:** _TBD_ (e.g., Python 3.12, Node 20, Go 1.22)
-- **Package manager:** _TBD_ (e.g., `uv`, `pip`, `npm`, `pnpm`)
-- **Key libraries:** _TBD_ (HTTP client, scraping/automation, scheduler, notification provider)
-- **Storage:** _TBD_ (SQLite, JSON file, none)
-- **Hosting:** _TBD_ (local cron, GitHub Actions, serverless, container)
+- **Language & runtime:** Python 3.11+
+- **Package manager:** `pip` (project uses `pyproject.toml` with hatchling)
+- **Key libraries:**
+  - `httpx` — HTTP client (used by `LiveFetcher`)
+  - `jinja2` — HTML templating
+- **Storage:** JSON files (hotel list + cached pricing). No database.
+- **Hosting:** Run locally or in CI (e.g., GitHub Actions on a schedule).
 
 ## Development Workflow
 
-Fill in once tooling exists. Suggested commands to document:
-
 ```bash
-# Install dependencies
-# e.g., uv sync   |   npm install
+# install (editable)
+pip install -e .
 
-# Run the app locally
-# e.g., python -m hyatt_checker   |   npm run start
+# generate report with synthetic data — no network calls, safe to run anytime
+hyatt-checker --source mock --output output/report.html
 
-# Run tests
-# e.g., pytest   |   npm test
-
-# Lint / format
-# e.g., ruff check . && ruff format .   |   npm run lint
+# verbose
+hyatt-checker --source mock -v
 ```
 
-Update these once the real commands are in place. Prefer documenting the exact command a contributor should run, not a generic description.
+There are no tests yet. There is no linter/formatter configured yet. Add `ruff`
+when the codebase grows.
 
-## Branching & Commits
+## Architecture
 
-- Default branch: `main` (once initialized).
-- Feature work happens on branches named `claude/<slug>` (for AI-driven sessions) or `<user>/<slug>`.
-- Open a PR against `main`; do not push directly.
-- Keep commits focused; one logical change per commit. Write the "why" in the message, not just the "what".
+The pipeline is small and linear:
+
+1. `cli.main` loads `data/hotels.json` and filters to `country=US` and
+   `category in {1, 2}`.
+2. For each hotel it asks a `Fetcher` for nightly point prices over the
+   window (today → today + N months).
+3. `report.build_report` turns the flat list of nights into a list of
+   `MonthGrid`s (calendar weeks).
+4. `report.render_html` renders all hotels into one HTML file via Jinja2.
+
+The `Fetcher` protocol has three implementations:
+
+- **`MockFetcher`** — deterministic synthetic pricing derived from the
+  official Hyatt award chart (`AWARD_CHART` in `client.py`). Used by default.
+  No network calls.
+- **`LiveFetcher`** — skeleton only. Hyatt has no public API; the real
+  endpoint needs to be captured from browser devtools and wired into
+  `_fetch_one`. See the module docstring in `client.py`.
+- **`CachingFetcher`** — wraps another fetcher with an on-disk JSON cache
+  keyed by `(hotel_slug, start, end)`. Always use this around `LiveFetcher`.
 
 ## Conventions
 
-Populate these as the codebase establishes patterns. Examples to capture:
+- **Code style:** Standard Python; `from __future__ import annotations` at the
+  top of every module. Prefer `dataclass(frozen=True)` for value types.
+- **Type hints:** Required on all function signatures.
+- **Module shape:** Keep modules small and single-purpose. Don't merge
+  `client.py` and `report.py`.
+- **Logging:** Use `logging.getLogger(__name__)` per module; CLI wires the
+  root logger. Don't use `print`.
+- **Secrets:** None at the moment. If `LiveFetcher` ever needs auth, load
+  from env vars; never commit cookies or session tokens.
+- **External APIs:** Be conservative with hyatt.com requests. Default
+  throttle in `LiveFetcher` is 2s between chunks of 30 nights. Always go
+  through `CachingFetcher` for live runs.
 
-- **Code style:** which formatter/linter and any project-specific rules.
-- **Type checking:** whether types are required, and how strict.
-- **Testing:** what to test (unit vs. integration), where tests live, naming.
-- **Logging:** logger to use, log levels, what should/shouldn't be logged.
-- **Secrets:** how API keys and credentials are loaded (env vars, `.env`, secret manager). Never commit secrets.
-- **External APIs:** rate-limit and retry policy when calling Hyatt or third-party endpoints; respect robots.txt and ToS if scraping.
+## Branching & Commits
+
+- Default branch: `main` (once it exists on the remote).
+- Feature work on `claude/<slug>` (AI sessions) or `<user>/<slug>`.
+- Open a PR against `main`; don't push directly.
+- One logical change per commit. Commit message explains the "why".
 
 ## Things AI Assistants Should Know
 
-- This is a personal project; favor small, readable code over heavy abstraction.
-- Don't add features the task didn't ask for, and don't introduce frameworks or dependencies without checking with the maintainer.
-- When making web requests against Hyatt or other live services, be conservative with request volume during development — avoid hammering production endpoints.
-- Don't commit credentials, cookies, session tokens, or personally identifying reservation data. If example data is needed in tests, use clearly fake values.
-- Update this file when the project structure, stack, or workflow changes meaningfully.
+- This is a personal project. Favor small, readable code over heavy abstraction.
+- Don't add features the task didn't ask for. No frameworks or dependencies
+  without checking with the maintainer.
+- When making web requests against Hyatt or other live services, be conservative
+  during development. Prefer `--source mock` while iterating.
+- The `data/hotels.json` list is hand-maintained and almost certainly incomplete.
+  Hyatt re-shuffles categories twice a year — verify entries against Hyatt's
+  current category list before relying on the output.
+- Property `code` fields are currently `null`. They're only needed for
+  `--source live` and must be the real 5-letter Hyatt property codes.
+- Don't commit credentials, session cookies, or personal reservation data.
+- Update this file when structure, stack, or workflow changes meaningfully.
 
 ## Open Questions
 
-Track decisions that haven't been made yet:
-
-- [ ] What does "checking" mean here — award availability, cash rates, both?
-- [ ] How does the tool authenticate (logged-in session, public endpoints only)?
-- [ ] How are results delivered — stdout, email, Slack/Discord, push notification?
-- [ ] How often does it run, and where (laptop cron, GitHub Actions, hosted)?
-
-Resolve these and either move the answers into the relevant section above or delete the question.
+- [ ] Capture Hyatt's real pricing endpoint and implement `LiveFetcher._fetch_one`.
+- [ ] Fill in real property `code` values in `data/hotels.json`.
+- [ ] Decide where this runs on a schedule (GitHub Actions? local cron?) and how
+      the generated HTML is delivered (commit to gh-pages? email? S3?).
+- [ ] Decide whether to add "diff vs. last run" so the user only sees nights
+      that changed.

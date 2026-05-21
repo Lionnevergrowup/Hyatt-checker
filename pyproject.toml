@@ -1,0 +1,19 @@
+[project]
+name = "hyatt-checker"
+version = "0.1.0"
+description = "Track World of Hyatt award pricing for Category 1 & 2 US properties."
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "jinja2>=3.1",
+]
+
+[project.scripts]
+hyatt-checker = "hyatt_checker.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hyatt_checker"]
