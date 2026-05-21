@@ -116,6 +116,7 @@ TEMPLATE = """<!doctype html>
   td.unknown  { background: #fafafa; color: #aaa; }
   td.empty    { background: transparent; border-color: transparent; }
   .back-to-top { display: block; text-align: right; font-size: 12px; color: var(--accent); text-decoration: none; margin-top: 0.5rem; }
+  .help button { font-size: 12px; padding: 2px 8px; margin-left: 0.4rem; border: 1px solid var(--border); background: transparent; color: var(--accent); border-radius: 4px; cursor: pointer; }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #111; --fg: #eee; --border: #2a2a2a; --muted: #aaa; --accent: #66aaff; }
     nav.index { background: #181818; }
@@ -144,7 +145,10 @@ TEMPLATE = """<!doctype html>
     <span class="top">top</span>
     <span class="unknown">? = tap to check</span>
   </p>
-  <p class="help">Tap any date to open Hyatt's award search for that night. Tap a hotel name to expand/collapse.</p>
+  <p class="help">Tap any date to open Hyatt's award search for that night. Tap a hotel name to expand/collapse.
+    <button type="button" id="expandAll">expand all</button>
+    <button type="button" id="collapseAll">collapse all</button>
+  </p>
 
   <nav class="index">
     <h2>Hotels ({{ reports|length }})</h2>
@@ -162,7 +166,7 @@ TEMPLATE = """<!doctype html>
   </nav>
 
   {% for r in reports %}
-  <details class="hotel" id="{{ r.hotel.slug }}" {% if loop.index <= 3 %}open{% endif %}>
+  <details class="hotel" id="{{ r.hotel.slug }}">
     <summary>
       <h2>{{ r.hotel.name }}</h2>
       <span class="sub">Cat {{ r.hotel.category }} · {{ r.hotel.city }}, {{ r.hotel.state }}{% if r.hotel.code %} · {{ r.hotel.code }}{% endif %}</span>
@@ -207,6 +211,22 @@ TEMPLATE = """<!doctype html>
     <a class="back-to-top" href="#top">↑ back to top</a>
   </details>
   {% endfor %}
+  <script>
+    // Make anchor links (and the index) actually open the collapsed section.
+    function openTargetFromHash() {
+      if (!location.hash) return;
+      var el = document.querySelector(location.hash);
+      if (el && el.tagName === 'DETAILS') el.open = true;
+    }
+    window.addEventListener('hashchange', openTargetFromHash);
+    openTargetFromHash();
+    document.getElementById('expandAll').addEventListener('click', function () {
+      document.querySelectorAll('details.hotel').forEach(function (d) { d.open = true; });
+    });
+    document.getElementById('collapseAll').addEventListener('click', function () {
+      document.querySelectorAll('details.hotel').forEach(function (d) { d.open = false; });
+    });
+  </script>
 </body>
 </html>
 """
