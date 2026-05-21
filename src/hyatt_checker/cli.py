@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from hyatt_checker.client import CachingFetcher, Fetcher, MockFetcher, PlaywrightFetcher
-from hyatt_checker.hotels import filter_us_cat_1_2, load_hotels
+from hyatt_checker.hotels import Hotel, filter_us_cat_1_2, load_hotels
 from hyatt_checker.report import build_report, render_html, write_report
 
 DEFAULT_HOTELS = Path("data/hotels.json")
 DEFAULT_OUTPUT = Path("output/report.html")
 DEFAULT_CACHE = Path(".cache")
+SNAPSHOT_NAME = "snapshot.json"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -29,6 +31,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="'mock' = synthetic pricing from the award chart (no network). "
                         "'live' = drive a real Chromium browser via Playwright "
                         "(install with `pip install -e .[live] && playwright install chromium`).")
+    p.add_argument("--favorites", type=Path, default=None,
+                   help="Optional file with one hotel slug or substring per line; "
+                        "only matching hotels appear in the report.")
     p.add_argument("--no-cache", action="store_true",
                    help="Disable the on-disk pricing cache.")
     p.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE)
@@ -43,6 +48,47 @@ def build_fetcher(source: str, cache_dir: Path | None) -> Fetcher:
     return CachingFetcher(base, cache_dir)
 
 
+def apply_favorites(hotels: list[Hotel], favorites_path: Path | None) -> list[Hotel]:
+    if favorites_path is None or not favorites_path.exists():
+        return hotels
+    needles = [
+        line.strip().lower()
+        for line in favorites_path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if not needles:
+        return hotels
+    return [
+        h for h in hotels
+        if any(n in h.slug.lower() or n in h.name.lower() for n in needles)
+    ]
+
+
+def load_snapshot(path: Path) -> dict[str, dict[str, int]]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_snapshot(path: Path, reports) -> None:
+    snap: dict[str, dict[str, int]] = {}
+    for r in reports:
+        per_day: dict[str, int] = {}
+        for m in r.months:
+            for week in m.weeks:
+                for cell in week:
+                    if cell and cell.points:
+                        d = date(m.year, m.month, cell.day).isoformat()
+                        per_day[d] = cell.points
+        if per_day:
+            snap[r.hotel.slug] = per_day
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(snap), encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(
@@ -52,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     log = logging.getLogger("hyatt_checker")
 
     hotels = filter_us_cat_1_2(load_hotels(args.hotels))
+    hotels = apply_favorites(hotels, args.favorites)
     log.info("loaded %d Cat 1/2 US hotels", len(hotels))
 
     start = date.today()
@@ -60,11 +107,16 @@ def main(argv: list[str] | None = None) -> int:
 
     fetcher = build_fetcher(args.source, None if args.no_cache else args.cache_dir)
 
+    snapshot_path = args.cache_dir / SNAPSHOT_NAME
+    previous = load_snapshot(snapshot_path)
+    if previous:
+        log.info("loaded previous snapshot with %d hotels for diff", len(previous))
+
     reports = []
     for hotel in hotels:
         log.info("fetching %s (cat %d)", hotel.name, hotel.category)
         prices = fetcher.fetch(hotel, start, end)
-        reports.append(build_report(hotel, prices, start, end))
+        reports.append(build_report(hotel, prices, start, end, previous=previous.get(hotel.slug)))
 
     html = render_html(
         reports,
@@ -74,12 +126,12 @@ def main(argv: list[str] | None = None) -> int:
         source=args.source,
     )
     write_report(html, args.output)
+    save_snapshot(snapshot_path, reports)
     log.info("wrote %s", args.output)
     return 0
 
 
 def _add_months(d: date, months: int) -> date:
-    # End-exclusive: same day-of-month N months later, clamped.
     year = d.year + (d.month - 1 + months) // 12
     month = (d.month - 1 + months) % 12 + 1
     day = min(d.day, _days_in_month(year, month))

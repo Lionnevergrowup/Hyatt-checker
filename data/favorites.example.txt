@@ -1,0 +1,8 @@
+# One hotel slug or substring per line. Lines starting with # are comments.
+# Copy this file to data/favorites.txt to limit the report to only these hotels.
+# Matching is case-insensitive substring match against the hotel name or slug.
+#
+# Examples:
+# nashville
+# hyatt-place-las-vegas
+# washington dc

@@ -23,6 +23,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -38,24 +39,33 @@ jobs:
       - name: Install Chromium for Playwright
         run: python -m playwright install --with-deps chromium
 
-      - name: Restore pricing cache
+      - name: Restore pricing cache (carries snapshot.json for diffs)
         uses: actions/cache@v4
         with:
           path: .cache
-          # Bust the cache weekly so old prices don't linger
           key: hyatt-pricing-${{ github.run_id }}
           restore-keys: |
             hyatt-pricing-
 
+      - name: Drop stale per-window cache, keep snapshot.json
+        run: |
+          if [ -d .cache ]; then
+            find .cache -type f -name '*.json' ! -name 'snapshot.json' -delete
+          fi
+
       - name: Generate report (live, fall back to mock)
         run: |
           mkdir -p public
-          if hyatt-checker --source live --months "${{ github.event.inputs.months || '6' }}" --output public/index.html -v; then
+          FAV=""
+          if [ -f data/favorites.txt ]; then FAV="--favorites data/favorites.txt"; fi
+          if hyatt-checker --source live --months "${{ github.event.inputs.months || '6' }}" $FAV --output public/index.html -v; then
             echo "live ok"
           else
             echo "live failed, falling back to mock so the page still updates"
-            hyatt-checker --source mock --months "${{ github.event.inputs.months || '6' }}" --output public/index.html
+            hyatt-checker --source mock --months "${{ github.event.inputs.months || '6' }}" $FAV --output public/index.html
           fi
+          # publish the snapshot too so external tooling can diff against it
+          if [ -f .cache/snapshot.json ]; then cp .cache/snapshot.json public/snapshot.json; fi
 
       - uses: actions/upload-pages-artifact@v3
         with:
