@@ -108,9 +108,11 @@ TEMPLATE = """<!doctype html>
   td .delta { position: absolute; top: 1px; right: 3px; font-size: 9px; font-weight: 700; }
   td .delta.up { color: #c0392b; }
   td .delta.down { color: #196f3d; }
-  td.off-peak { background: #e6f4ea; }
-  td.standard { background: #fff8e1; }
-  td.peak     { background: #fdecea; }
+  td.lowest   { background: #c8e6c9; }
+  td.low      { background: #e6f4ea; }
+  td.moderate { background: #fff8e1; }
+  td.upper    { background: #ffe0b2; }
+  td.top      { background: #fdecea; }
   td.unknown  { background: #fafafa; color: #aaa; }
   td.empty    { background: transparent; border-color: transparent; }
   .back-to-top { display: block; text-align: right; font-size: 12px; color: var(--accent); text-decoration: none; margin-top: 0.5rem; }
@@ -120,9 +122,11 @@ TEMPLATE = """<!doctype html>
     nav.index .min { color: #5acc7a; }
     details.hotel { border-color: #333; }
     table.cal th { background: #1a1a1a; }
-    td.off-peak { background: #163e21; }
-    td.standard { background: #4a3a00; }
-    td.peak     { background: #4a1d1d; }
+    td.lowest   { background: #0e5a23; }
+    td.low      { background: #163e21; }
+    td.moderate { background: #4a3a00; }
+    td.upper    { background: #5a3500; }
+    td.top      { background: #4a1d1d; }
     td.unknown  { background: #1a1a1a; }
     details.hotel > summary .badge { background: #223; color: #cce; }
     details.hotel > summary .badge.changed { background: #5a4400; color: #ffe27a; }
@@ -133,9 +137,11 @@ TEMPLATE = """<!doctype html>
   <h1 id="top">Hyatt Cat 1 & 2 — US Award Pricing</h1>
   <p class="meta">Updated {{ generated_at }} · {{ window_start }} → {{ window_end }} · {{ reports|length }} hotels · source: {{ source }}</p>
   <p class="legend">
-    <span class="off-peak">off-peak</span>
-    <span class="standard">standard</span>
-    <span class="peak">peak</span>
+    <span class="lowest">lowest</span>
+    <span class="low">low</span>
+    <span class="moderate">moderate</span>
+    <span class="upper">upper</span>
+    <span class="top">top</span>
     <span class="unknown">? = tap to check</span>
   </p>
   <p class="help">Tap any date to open Hyatt's award search for that night. Tap a hotel name to expand/collapse.</p>

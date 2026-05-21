@@ -16,16 +16,19 @@ from hyatt_checker.hotels import Hotel
 log = logging.getLogger(__name__)
 
 
-# Hyatt's published award chart (standard rooms). Off-peak / standard / peak.
-AWARD_CHART: dict[int, tuple[int, int, int]] = {
-    1: (3_500, 5_000, 6_500),
-    2: (6_500, 8_000, 9_500),
-    3: (9_000, 12_000, 15_000),
-    4: (12_000, 15_000, 18_000),
-    5: (17_000, 20_000, 23_000),
-    6: (21_000, 25_000, 29_000),
-    7: (25_000, 30_000, 35_000),
-    8: (35_000, 40_000, 45_000),
+# Hyatt's published award chart (standard rooms), effective 2026-05-20.
+# Five tiers per category replacing the old off-peak / standard / peak split.
+# Order: lowest, low, moderate, upper, top.
+TIER_NAMES: tuple[str, ...] = ("lowest", "low", "moderate", "upper", "top")
+AWARD_CHART: dict[int, tuple[int, int, int, int, int]] = {
+    1: (3_000,  4_500,  6_000,  7_500,  9_000),
+    2: (6_000,  7_500, 10_000, 12_000, 15_000),
+    3: (8_000, 12_000, 15_000, 17_500, 20_000),
+    4: (12_000, 15_000, 20_000, 22_500, 25_000),
+    5: (15_000, 20_000, 25_000, 30_000, 35_000),
+    6: (20_000, 25_000, 30_000, 35_000, 40_000),
+    7: (25_000, 30_000, 35_000, 45_000, 55_000),
+    8: (35_000, 45_000, 55_000, 65_000, 75_000),
 }
 
 
@@ -51,7 +54,10 @@ class MockFetcher:
         self.sellout_chance = sellout_chance
 
     def fetch(self, hotel: Hotel, start: date, end: date) -> list[NightPrice]:
-        off_peak, standard, peak = AWARD_CHART[hotel.category]
+        prices_by_tier = AWARD_CHART[hotel.category]
+        # Weekday bias: midweek leans toward cheaper tiers, weekends toward upper.
+        weekday_weights = (0.30, 0.30, 0.25, 0.10, 0.05)  # lowest..top
+        weekend_weights = (0.05, 0.15, 0.30, 0.30, 0.20)
         out: list[NightPrice] = []
         seed = int(hashlib.sha1(hotel.slug.encode()).hexdigest(), 16)
         cur = start
@@ -60,17 +66,22 @@ class MockFetcher:
             r = ((seed + i * 2654435761) & 0xFFFF) / 0xFFFF
             if r < self.sellout_chance:
                 out.append(NightPrice(cur, None, None))
-            elif cur.weekday() >= 5:
-                tier = "peak" if r < 0.4 else "standard"
-                out.append(NightPrice(cur, peak if tier == "peak" else standard, tier))
             else:
-                tier = "off-peak" if r < 0.5 else "standard"
-                out.append(
-                    NightPrice(cur, off_peak if tier == "off-peak" else standard, tier)
-                )
+                weights = weekend_weights if cur.weekday() >= 5 else weekday_weights
+                idx = _weighted_index(r, weights)
+                out.append(NightPrice(cur, prices_by_tier[idx], TIER_NAMES[idx]))
             cur += timedelta(days=1)
             i += 1
         return out
+
+
+def _weighted_index(r: float, weights: tuple[float, ...]) -> int:
+    acc = 0.0
+    for i, w in enumerate(weights):
+        acc += w
+        if r <= acc:
+            return i
+    return len(weights) - 1
 
 
 class PlaywrightFetcher:
@@ -282,14 +293,17 @@ def _infer_tier(hotel: Hotel, points: int | None) -> str | None:
     chart = AWARD_CHART.get(hotel.category)
     if not chart:
         return None
-    off_peak, standard, peak = chart
-    if points <= off_peak:
-        return "off-peak"
-    if points <= standard:
-        return "standard"
-    if points <= peak:
-        return "peak"
-    return "peak"  # higher than expected — still mark as peak-ish
+    # Find the tier whose published price is closest to the observed points;
+    # tolerates small server-side variations and clamps out-of-range values
+    # to the nearest endpoint tier.
+    best_i = 0
+    best_diff = abs(points - chart[0])
+    for i, p in enumerate(chart):
+        diff = abs(points - p)
+        if diff < best_diff:
+            best_diff = diff
+            best_i = i
+    return TIER_NAMES[best_i]
 
 
 class CachingFetcher:
