@@ -12,7 +12,7 @@ on:
         default: "6"
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -53,19 +53,30 @@ jobs:
             find .cache -type f -name '*.json' ! -name 'snapshot.json' -delete
           fi
 
-      - name: Generate report (live, fall back to mock)
+      - name: Generate report (live + discover hotels, fall back to mock)
         run: |
           mkdir -p public
           FAV=""
           if [ -f data/favorites.txt ]; then FAV="--favorites data/favorites.txt"; fi
-          if hyatt-checker --source live --months "${{ github.event.inputs.months || '6' }}" $FAV --output public/index.html -v; then
+          if hyatt-checker --source live --discover --months "${{ github.event.inputs.months || '6' }}" $FAV --output public/index.html -v; then
             echo "live ok"
           else
             echo "live failed, falling back to mock so the page still updates"
             hyatt-checker --source mock --months "${{ github.event.inputs.months || '6' }}" $FAV --output public/index.html
           fi
-          # publish the snapshot too so external tooling can diff against it
           if [ -f .cache/snapshot.json ]; then cp .cache/snapshot.json public/snapshot.json; fi
+
+      - name: Commit refreshed hotels.json
+        run: |
+          if git diff --quiet -- data/hotels.json; then
+            echo "hotels.json unchanged"
+          else
+            git config user.name "hyatt-checker-bot"
+            git config user.email "bot@users.noreply.github.com"
+            git add data/hotels.json
+            git commit -m "Auto-refresh hotels.json from Hyatt discovery"
+            git push
+          fi
 
       - uses: actions/upload-pages-artifact@v3
         with:

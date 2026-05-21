@@ -31,6 +31,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="'mock' = synthetic pricing from the award chart (no network). "
                         "'live' = drive a real Chromium browser via Playwright "
                         "(install with `pip install -e .[live] && playwright install chromium`).")
+    p.add_argument("--discover", action="store_true",
+                   help="Before fetching, try to refresh data/hotels.json by scraping "
+                        "Hyatt's hotel directory via Playwright. Best-effort: keeps "
+                        "the existing list if discovery fails or finds nothing.")
     p.add_argument("--favorites", type=Path, default=None,
                    help="Optional file with one hotel slug or substring per line; "
                         "only matching hotels appear in the report.")
@@ -96,6 +100,18 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     log = logging.getLogger("hyatt_checker")
+
+    if args.discover:
+        try:
+            from hyatt_checker.discover import discover_us_cat_1_2, merge_into_file
+            found = discover_us_cat_1_2()
+            if found:
+                added, updated = merge_into_file(found, args.hotels)
+                log.info("discovery merged into %s (+%d new, %d updated)", args.hotels, added, updated)
+            else:
+                log.warning("discovery returned 0 hotels; keeping existing %s", args.hotels)
+        except Exception as e:
+            log.warning("discovery failed: %s; keeping existing %s", e, args.hotels)
 
     hotels = filter_us_cat_1_2(load_hotels(args.hotels))
     hotels = apply_favorites(hotels, args.favorites)
