@@ -5,7 +5,7 @@ import logging
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from hyatt_checker.client import CachingFetcher, Fetcher, LiveFetcher, MockFetcher
+from hyatt_checker.client import CachingFetcher, Fetcher, MockFetcher, PlaywrightFetcher
 from hyatt_checker.hotels import filter_us_cat_1_2, load_hotels
 from hyatt_checker.report import build_report, render_html, write_report
 
@@ -26,7 +26,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--months", type=int, default=6,
                    help="How many months ahead to check (default: 6).")
     p.add_argument("--source", choices=("mock", "live"), default="mock",
-                   help="Where pricing comes from. 'live' requires LiveFetcher to be implemented.")
+                   help="'mock' = synthetic pricing from the award chart (no network). "
+                        "'live' = drive a real Chromium browser via Playwright "
+                        "(install with `pip install -e .[live] && playwright install chromium`).")
     p.add_argument("--no-cache", action="store_true",
                    help="Disable the on-disk pricing cache.")
     p.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE)
@@ -35,7 +37,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def build_fetcher(source: str, cache_dir: Path | None) -> Fetcher:
-    base: Fetcher = MockFetcher() if source == "mock" else LiveFetcher()
+    base: Fetcher = MockFetcher() if source == "mock" else PlaywrightFetcher()
     if cache_dir is None:
         return base
     return CachingFetcher(base, cache_dir)
@@ -68,7 +70,8 @@ def main(argv: list[str] | None = None) -> int:
         reports,
         start,
         end,
-        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M UTC"),
+        source=args.source,
     )
     write_report(html, args.output)
     log.info("wrote %s", args.output)

@@ -8,6 +8,11 @@ dependencies = [
     "jinja2>=3.1",
 ]
 
+[project.optional-dependencies]
+live = [
+    "playwright>=1.45",
+]
+
 [project.scripts]
 hyatt-checker = "hyatt_checker.cli:main"
 

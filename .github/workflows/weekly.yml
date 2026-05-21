@@ -1,0 +1,72 @@
+name: Weekly Hyatt report
+
+on:
+  schedule:
+    # Sunday 13:00 UTC = ~8am US Central. Adjust to taste.
+    - cron: "0 13 * * 0"
+  workflow_dispatch:  # button on the Actions tab; tappable from the GitHub mobile app
+    inputs:
+      months:
+        description: "Months ahead to fetch"
+        required: false
+        default: "6"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package (with live extra)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[live]"
+
+      - name: Install Chromium for Playwright
+        run: python -m playwright install --with-deps chromium
+
+      - name: Restore pricing cache
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          # Bust the cache weekly so old prices don't linger
+          key: hyatt-pricing-${{ github.run_id }}
+          restore-keys: |
+            hyatt-pricing-
+
+      - name: Generate report (live, fall back to mock)
+        run: |
+          mkdir -p public
+          if hyatt-checker --source live --months "${{ github.event.inputs.months || '6' }}" --output public/index.html -v; then
+            echo "live ok"
+          else
+            echo "live failed, falling back to mock so the page still updates"
+            hyatt-checker --source mock --months "${{ github.event.inputs.months || '6' }}" --output public/index.html
+          fi
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

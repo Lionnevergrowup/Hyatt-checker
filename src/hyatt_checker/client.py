@@ -3,13 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Protocol
-
-import httpx
+from typing import Iterable, Protocol
+from urllib.parse import quote
 
 from hyatt_checker.hotels import Hotel
 
@@ -32,7 +32,7 @@ AWARD_CHART: dict[int, tuple[int, int, int]] = {
 @dataclass(frozen=True)
 class NightPrice:
     night: date
-    points: int | None  # None == not available on points
+    points: int | None  # None == not available on points or fetch failed
     tier: str | None    # "off-peak" | "standard" | "peak" | None
 
 
@@ -41,10 +41,10 @@ class Fetcher(Protocol):
 
 
 class MockFetcher:
-    """Generates plausible synthetic pricing using the official award chart.
+    """Generates plausible synthetic pricing from the official award chart.
 
-    Useful for offline development and for verifying the report pipeline
-    without hitting Hyatt's servers. Replace with LiveFetcher for real data.
+    No network calls. Useful for development and as a fallback when the
+    live fetcher fails for a particular hotel.
     """
 
     def __init__(self, sellout_chance: float = 0.05) -> None:
@@ -60,7 +60,7 @@ class MockFetcher:
             r = ((seed + i * 2654435761) & 0xFFFF) / 0xFFFF
             if r < self.sellout_chance:
                 out.append(NightPrice(cur, None, None))
-            elif cur.weekday() >= 5:  # Sat/Sun lean peak
+            elif cur.weekday() >= 5:
                 tier = "peak" if r < 0.4 else "standard"
                 out.append(NightPrice(cur, peak if tier == "peak" else standard, tier))
             else:
@@ -73,60 +73,223 @@ class MockFetcher:
         return out
 
 
-class LiveFetcher:
-    """Skeleton for a real Hyatt fetcher.
+class PlaywrightFetcher:
+    """Drives a real Chromium browser through Hyatt's award search.
 
-    Hyatt has no public API. Their site uses anti-bot tokens and rotating
-    session cookies, and the request shape changes periodically. To finish
-    this implementation you need to:
+    This intentionally does not call any Hyatt JSON endpoint directly.
+    It opens the booking page in a headless browser, lets Hyatt's own JS
+    issue the pricing requests, and intercepts the responses. That avoids
+    having to guess the API contract, and looks much more like a real
+    user to Akamai bot detection than a `curl`.
 
-      1. Open the Hyatt award search in a browser with devtools open.
-      2. Capture the JSON endpoint it calls (something under www.hyatt.com
-         that returns nightly point pricing for a property + date range).
-      3. Fill in _fetch_one below: build the request, parse the response,
-         and map each night to a NightPrice. Determine the tier from the
-         returned points by comparing against AWARD_CHART[hotel.category].
-      4. Keep the throttle conservative (the defaults below are a starting
-         point). Cache results aggressively via CachingFetcher.
+    Realities to know:
+      - Hyatt uses aggressive bot detection. From a datacenter IP this
+        may still get blocked; from a residential IP it usually works.
+      - The JSON shape returned by Hyatt's internal endpoints changes
+        periodically. The parser here is heuristic (walks the response
+        tree looking for date/points pairs) so it tolerates small
+        renames, but a structural overhaul will break it.
+      - Be polite. Default throttle is 4s between requests; default
+        chunk size is 30 nights.
+
+    On failure for a given hotel, returns nights with points=None so
+    the calendar renders the dates as "tap to check" instead of crashing
+    the whole run.
     """
 
-    BASE_URL = "https://www.hyatt.com"  # TODO: replace with real pricing endpoint
+    SEARCH_URL = "https://www.hyatt.com/search/hotels?q={q}"
+    SHOP_URL = (
+        "https://www.hyatt.com/shop/rooms/{code}"
+        "?checkinDate={checkin}&checkoutDate={checkout}"
+        "&rooms=1&adults=1&rate=woh"
+    )
     USER_AGENT = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0 Safari/537.36"
+        "Chrome/124.0.0.0 Safari/537.36"
     )
 
-    def __init__(self, request_delay_s: float = 2.0, chunk_days: int = 30) -> None:
-        self.request_delay_s = request_delay_s
+    def __init__(
+        self,
+        headless: bool = True,
+        throttle_s: float = 4.0,
+        chunk_days: int = 30,
+        nav_timeout_ms: int = 30_000,
+    ) -> None:
+        self.headless = headless
+        self.throttle_s = throttle_s
         self.chunk_days = chunk_days
-        self._client = httpx.Client(
-            headers={"User-Agent": self.USER_AGENT, "Accept": "application/json"},
-            timeout=20.0,
-        )
+        self.nav_timeout_ms = nav_timeout_ms
 
     def fetch(self, hotel: Hotel, start: date, end: date) -> list[NightPrice]:
-        if not hotel.code:
-            log.warning("skipping %s: no property code", hotel.name)
-            return []
-        out: list[NightPrice] = []
-        cur = start
-        while cur < end:
-            chunk_end = min(cur + timedelta(days=self.chunk_days), end)
-            out.extend(self._fetch_one(hotel, cur, chunk_end))
-            cur = chunk_end
-            time.sleep(self.request_delay_s)
-        return out
+        from playwright.sync_api import sync_playwright  # lazy import
 
-    def _fetch_one(self, hotel: Hotel, start: date, end: date) -> list[NightPrice]:
-        # TODO: implement the real request once the endpoint is known.
-        # Example shape (do not assume this URL is correct):
-        #   GET {BASE_URL}/shop/pricing/{hotel.code}
-        #       ?checkin=YYYY-MM-DD&checkout=YYYY-MM-DD&rate=woh
-        raise NotImplementedError(
-            "LiveFetcher is a skeleton. Capture the real Hyatt pricing endpoint "
-            "and implement _fetch_one. See module docstring for details."
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=self.headless,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            ctx = browser.new_context(
+                user_agent=self.USER_AGENT,
+                viewport={"width": 1280, "height": 900},
+                locale="en-US",
+            )
+            ctx.add_init_script(
+                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+            )
+            page = ctx.new_page()
+            page.set_default_timeout(self.nav_timeout_ms)
+
+            try:
+                code = hotel.code or self._discover_code(page, hotel)
+                if not code:
+                    log.warning("no property code for %s; returning blanks", hotel.name)
+                    return _blank_window(start, end)
+                if code != hotel.code:
+                    log.info("discovered code %s for %s", code, hotel.name)
+                    hotel = replace(hotel, code=code)
+
+                results: list[NightPrice] = []
+                cur = start
+                while cur < end:
+                    chunk_end = min(cur + timedelta(days=self.chunk_days), end)
+                    results.extend(self._fetch_chunk(page, hotel, cur, chunk_end))
+                    cur = chunk_end
+                    time.sleep(self.throttle_s)
+                return results
+            except Exception as e:
+                log.warning("PlaywrightFetcher failed for %s: %s", hotel.name, e)
+                return _blank_window(start, end)
+            finally:
+                browser.close()
+
+    def _discover_code(self, page, hotel: Hotel) -> str | None:
+        url = self.SEARCH_URL.format(q=quote(hotel.name))
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+            page.wait_for_load_state("networkidle", timeout=15_000)
+        except Exception as e:
+            log.debug("search nav failed for %s: %s", hotel.name, e)
+            return None
+        html = page.content()
+        # Hotel shop URLs look like /shop/<code> or /shop/rooms/<code>.
+        # Codes are typically 5 lowercase letters/digits.
+        m = re.search(r'/shop/(?:rooms/)?([a-z0-9]{4,8})', html)
+        return m.group(1) if m else None
+
+    def _fetch_chunk(
+        self, page, hotel: Hotel, start: date, end: date
+    ) -> list[NightPrice]:
+        assert hotel.code is not None
+        captured: list[object] = []
+
+        def on_response(resp):
+            ct = (resp.headers or {}).get("content-type", "")
+            if "json" not in ct:
+                return
+            url = resp.url.lower()
+            if not any(k in url for k in ("pricing", "availability", "rate", "shop")):
+                return
+            try:
+                captured.append(resp.json())
+            except Exception:
+                pass
+
+        page.on("response", on_response)
+        url = self.SHOP_URL.format(
+            code=hotel.code,
+            checkin=start.isoformat(),
+            checkout=end.isoformat(),
         )
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+            page.wait_for_load_state("networkidle", timeout=20_000)
+        except Exception as e:
+            log.debug("chunk nav failed %s %s: %s", hotel.name, start, e)
+        finally:
+            page.remove_listener("response", on_response)
+
+        return _parse_captured(captured, hotel, start, end)
+
+
+def _blank_window(start: date, end: date) -> list[NightPrice]:
+    out: list[NightPrice] = []
+    cur = start
+    while cur < end:
+        out.append(NightPrice(cur, None, None))
+        cur += timedelta(days=1)
+    return out
+
+
+def _parse_captured(
+    captured: list[object], hotel: Hotel, start: date, end: date
+) -> list[NightPrice]:
+    """Walk every captured JSON response for (date, points) pairs."""
+    nights: dict[date, int] = {}
+    for blob in captured:
+        for d, pts in _walk_for_date_points(blob):
+            if start <= d < end and pts > 0:
+                nights[d] = min(nights.get(d, pts), pts)
+    return [
+        NightPrice(
+            night=d,
+            points=nights.get(d),
+            tier=_infer_tier(hotel, nights.get(d)),
+        )
+        for d in _daterange(start, end)
+    ]
+
+
+def _daterange(start: date, end: date) -> Iterable[date]:
+    cur = start
+    while cur < end:
+        yield cur
+        cur += timedelta(days=1)
+
+
+_DATE_KEYS = ("date", "checkindate", "checkin", "stayDate", "stay_date", "day")
+_POINTS_KEYS = (
+    "points", "pointsamount", "pointsprice", "pointsrate",
+    "amount", "value", "rate",
+)
+
+
+def _walk_for_date_points(obj) -> Iterable[tuple[date, int]]:
+    if isinstance(obj, dict):
+        date_v = None
+        pts_v = None
+        for k, v in obj.items():
+            lk = k.lower()
+            if date_v is None and lk in _DATE_KEYS and isinstance(v, str):
+                date_v = v
+            elif pts_v is None and lk in _POINTS_KEYS and isinstance(v, (int, float)):
+                pts_v = int(v)
+        if date_v and pts_v and pts_v >= 1_000:
+            try:
+                yield (date.fromisoformat(date_v[:10]), pts_v)
+            except ValueError:
+                pass
+        for v in obj.values():
+            yield from _walk_for_date_points(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _walk_for_date_points(v)
+
+
+def _infer_tier(hotel: Hotel, points: int | None) -> str | None:
+    if points is None:
+        return None
+    chart = AWARD_CHART.get(hotel.category)
+    if not chart:
+        return None
+    off_peak, standard, peak = chart
+    if points <= off_peak:
+        return "off-peak"
+    if points <= standard:
+        return "standard"
+    if points <= peak:
+        return "peak"
+    return "peak"  # higher than expected — still mark as peak-ish
 
 
 class CachingFetcher:
