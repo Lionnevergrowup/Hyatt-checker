@@ -67,8 +67,8 @@ BRIDGE_HTML = """<!doctype html>
   :root { color-scheme: light dark; --accent: #1a73e8; --muted: #666; --bg: #fff; --fg: #111; }
   body { font: 16px/1.5 -apple-system, system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 1.5rem; text-align: center; background: var(--bg); color: var(--fg); }
   h1 { margin: 0 0 0.5rem; font-size: 1.15rem; color: var(--muted); font-weight: 500; }
-  .date { font-size: 3rem; font-weight: 700; color: var(--accent); margin: 0.75rem 0 0.25rem; line-height: 1.05; }
-  .iso { color: var(--muted); font-size: 0.95rem; font-family: ui-monospace, SFMono-Regular, monospace; letter-spacing: 0.5px; }
+  .date { font-size: 3rem; font-weight: 700; color: var(--accent); margin: 0.75rem 0 0.25rem; line-height: 1.05; user-select: text; -webkit-user-select: text; }
+  .iso { color: var(--muted); font-size: 1.1rem; font-family: ui-monospace, SFMono-Regular, monospace; letter-spacing: 0.5px; user-select: all; -webkit-user-select: all; padding: 0.5rem; border: 1px dashed #ccc; border-radius: 6px; display: inline-block; margin-bottom: 0.5rem; }
   .btn { display: block; width: 100%; box-sizing: border-box; padding: 1rem; margin: 0.75rem 0; text-decoration: none; border-radius: 10px; font-size: 1rem; font-weight: 600; border: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .btn:active { transform: scale(0.98); }
   .btn.primary { background: var(--accent); color: white; }
@@ -87,7 +87,7 @@ BRIDGE_HTML = """<!doctype html>
   <div class="iso" id="iso">&nbsp;</div>
   <a class="btn primary" id="open" href="#">Open in Hyatt</a>
   <button class="btn secondary" id="copy" type="button">Copy date</button>
-  <p class="note">Hyatt doesn't pre-fill the date through deeplinks. Tap <b>Copy date</b>, then <b>Open in Hyatt</b>; in the app, tap the date picker and paste (or just type the date you see above).</p>
+  <p class="note">Hyatt doesn't pre-fill the date through deeplinks. Tap <b>Copy date</b> (or long-press the dashed box above to select it manually), then <b>Open in Hyatt</b> and pick the date in the date picker.</p>
   <a class="back" href="./">← back to calendar</a>
   <script>
     const params = new URLSearchParams(location.hash.slice(1));
@@ -105,17 +105,37 @@ BRIDGE_HTML = """<!doctype html>
       document.getElementById('date').textContent =
         weekdays[wd] + ' ' + months[m - 1] + ' ' + d + ', ' + y;
     }
-    document.getElementById('copy').addEventListener('click', async () => {
+    document.getElementById('copy').addEventListener('click', () => {
       const b = document.getElementById('copy');
       const orig = b.textContent;
-      try {
-        await navigator.clipboard.writeText(iso);
-        b.textContent = 'Copied ' + iso;
-      } catch (e) {
-        b.textContent = 'Copy failed — ' + iso;
+      const done = (label) => {
+        b.textContent = label;
+        setTimeout(() => { b.textContent = orig; }, 2500);
+      };
+      // Modern path
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(iso)
+          .then(() => done('Copied ' + iso))
+          .catch(() => legacyCopy(done));
+      } else {
+        legacyCopy(done);
       }
-      setTimeout(() => { b.textContent = orig; }, 2000);
     });
+    function legacyCopy(done) {
+      // Fallback: select the iso text node and execCommand('copy')
+      try {
+        const range = document.createRange();
+        range.selectNodeContents(document.getElementById('iso'));
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        const ok = document.execCommand('copy');
+        sel.removeAllRanges();
+        done(ok ? 'Copied ' + iso : 'Long-press the dashed box');
+      } catch (e) {
+        done('Long-press the dashed box');
+      }
+    }
   </script>
 </body>
 </html>
