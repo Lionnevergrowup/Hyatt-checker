@@ -119,6 +119,32 @@ class PlaywrightFetcher:
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     )
+    # Inlined puppeteer-stealth-style patches. Far from bullet-proof against
+    # Akamai, but covers the cheap detection surface (navigator.webdriver,
+    # missing chrome.runtime, plugin list, languages, permissions API).
+    STEALTH_JS = """
+      Object.defineProperty(navigator,'webdriver',{get:()=>undefined});
+      window.chrome = window.chrome || { runtime: {} };
+      Object.defineProperty(navigator,'languages',{get:()=>['en-US','en']});
+      Object.defineProperty(navigator,'plugins',{
+        get:()=>[{name:'Chrome PDF Plugin'},{name:'Chrome PDF Viewer'},{name:'Native Client'}]
+      });
+      const _q = (window.navigator.permissions||{}).query;
+      if (_q) {
+        window.navigator.permissions.query = (p) =>
+          p && p.name === 'notifications'
+            ? Promise.resolve({ state: Notification.permission })
+            : _q.call(window.navigator.permissions, p);
+      }
+      Object.defineProperty(screen,'colorDepth',{get:()=>24});
+    """
+    EXTRA_HEADERS = {
+        "Accept-Language": "en-US,en;q=0.9",
+        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"macOS"',
+        "Upgrade-Insecure-Requests": "1",
+    }
 
     def __init__(
         self,
@@ -126,11 +152,14 @@ class PlaywrightFetcher:
         throttle_s: float = 4.0,
         chunk_days: int = 30,
         nav_timeout_ms: int = 30_000,
+        debug_dir: Path | None = None,
     ) -> None:
         self.headless = headless
         self.throttle_s = throttle_s
         self.chunk_days = chunk_days
         self.nav_timeout_ms = nav_timeout_ms
+        self.debug_dir = debug_dir
+        self._debug_dumped = False
 
     def fetch(self, hotel: Hotel, start: date, end: date) -> list[NightPrice]:
         from playwright.sync_api import sync_playwright  # lazy import
@@ -138,16 +167,20 @@ class PlaywrightFetcher:
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=self.headless,
-                args=["--disable-blink-features=AutomationControlled"],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                ],
             )
             ctx = browser.new_context(
                 user_agent=self.USER_AGENT,
                 viewport={"width": 1280, "height": 900},
                 locale="en-US",
+                timezone_id="America/New_York",
+                extra_http_headers=self.EXTRA_HEADERS,
             )
-            ctx.add_init_script(
-                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-            )
+            ctx.add_init_script(self.STEALTH_JS)
             page = ctx.new_page()
             page.set_default_timeout(self.nav_timeout_ms)
 
@@ -155,6 +188,7 @@ class PlaywrightFetcher:
                 code = hotel.code or self._discover_code(page, hotel)
                 if not code:
                     log.warning("no property code for %s; returning blanks", hotel.name)
+                    self._dump_debug(page, hotel, "no-code")
                     return _blank_window(start, end)
                 if code != hotel.code:
                     log.info("discovered code %s for %s", code, hotel.name)
@@ -167,12 +201,36 @@ class PlaywrightFetcher:
                     results.extend(self._fetch_chunk(page, hotel, cur, chunk_end))
                     cur = chunk_end
                     time.sleep(self.throttle_s)
+                # If we got nothing useful, dump a snapshot of the last page
+                # so we can see what Hyatt actually returned.
+                if not any(r.points for r in results):
+                    self._dump_debug(page, hotel, "no-prices")
                 return results
             except Exception as e:
                 log.warning("PlaywrightFetcher failed for %s: %s", hotel.name, e)
+                self._dump_debug(page, hotel, "exception")
                 return _blank_window(start, end)
             finally:
                 browser.close()
+
+    def _dump_debug(self, page, hotel: Hotel, tag: str) -> None:
+        """Save a screenshot + html of the current page once per run.
+
+        Only writes for the first hotel that triggers a dump, so we don't
+        produce 28 megabytes of nearly-identical debug bundles every run.
+        """
+        if not self.debug_dir or self._debug_dumped:
+            return
+        try:
+            self.debug_dir.mkdir(parents=True, exist_ok=True)
+            base = self.debug_dir / f"first-failure-{tag}-{hotel.slug}"
+            page.screenshot(path=str(base.with_suffix(".png")), full_page=False)
+            (base.with_suffix(".html")).write_text(page.content(), encoding="utf-8")
+            (base.with_suffix(".url")).write_text(page.url, encoding="utf-8")
+            log.info("wrote debug bundle: %s.*", base)
+            self._debug_dumped = True
+        except Exception as e:
+            log.debug("debug dump failed: %s", e)
 
     def _discover_code(self, page, hotel: Hotel) -> str | None:
         url = self.SEARCH_URL.format(q=quote(hotel.name))

@@ -58,13 +58,14 @@ jobs:
           mkdir -p public
           FAV=""
           if [ -f data/favorites.txt ]; then FAV="--favorites data/favorites.txt"; fi
-          if hyatt-checker --source live --discover --months "${{ github.event.inputs.months || '6' }}" $FAV --output public/index.html -v; then
+          if hyatt-checker --source live --discover --months "${{ github.event.inputs.months || '6' }}" $FAV --debug-dir public/debug --output public/index.html -v; then
             echo "live ok"
           else
             echo "live failed, falling back to mock so the page still updates"
             hyatt-checker --source mock --months "${{ github.event.inputs.months || '6' }}" $FAV --output public/index.html
           fi
           if [ -f .cache/snapshot.json ]; then cp .cache/snapshot.json public/snapshot.json; fi
+          ls -la public/debug 2>/dev/null || true
 
       - name: Commit refreshed hotels.json
         run: |

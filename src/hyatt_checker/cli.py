@@ -35,6 +35,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Before fetching, try to refresh data/hotels.json by scraping "
                         "Hyatt's hotel directory via Playwright. Best-effort: keeps "
                         "the existing list if discovery fails or finds nothing.")
+    p.add_argument("--debug-dir", type=Path, default=None,
+                   help="If set, the live fetcher dumps a screenshot+HTML of the "
+                        "first failed page here, so you can see what Hyatt actually "
+                        "served (usually an Akamai block page).")
     p.add_argument("--favorites", type=Path, default=None,
                    help="Optional file with one hotel slug or substring per line; "
                         "only matching hotels appear in the report.")
@@ -45,8 +49,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def build_fetcher(source: str, cache_dir: Path | None) -> Fetcher:
-    base: Fetcher = MockFetcher() if source == "mock" else PlaywrightFetcher()
+def build_fetcher(
+    source: str, cache_dir: Path | None, debug_dir: Path | None = None
+) -> Fetcher:
+    base: Fetcher = (
+        MockFetcher() if source == "mock" else PlaywrightFetcher(debug_dir=debug_dir)
+    )
     if cache_dir is None:
         return base
     return CachingFetcher(base, cache_dir)
@@ -121,7 +129,11 @@ def main(argv: list[str] | None = None) -> int:
     end = _add_months(start, args.months)
     log.info("window: %s -> %s", start, end)
 
-    fetcher = build_fetcher(args.source, None if args.no_cache else args.cache_dir)
+    fetcher = build_fetcher(
+        args.source,
+        None if args.no_cache else args.cache_dir,
+        debug_dir=args.debug_dir,
+    )
 
     snapshot_path = args.cache_dir / SNAPSHOT_NAME
     previous = load_snapshot(snapshot_path)
