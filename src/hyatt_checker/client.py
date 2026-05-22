@@ -84,6 +84,19 @@ def _weighted_index(r: float, weights: tuple[float, ...]) -> int:
     return len(weights) - 1
 
 
+class NullFetcher:
+    """Returns blank prices for every night.
+
+    Use when no data source is available (e.g., Hyatt's Kasada bot
+    detection blocks every CI request). The calendar still renders
+    with tappable deeplinks — the user verifies each night manually
+    on their phone, where the real browser session passes Kasada.
+    """
+
+    def fetch(self, hotel: Hotel, start: date, end: date) -> list[NightPrice]:
+        return _blank_window(start, end)
+
+
 class PlaywrightFetcher:
     """Drives a real Chromium browser through Hyatt's award search.
 

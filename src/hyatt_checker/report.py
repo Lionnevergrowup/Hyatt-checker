@@ -7,7 +7,7 @@ from pathlib import Path
 
 from jinja2 import Environment
 
-from hyatt_checker.client import NightPrice
+from hyatt_checker.client import AWARD_CHART, NightPrice
 from hyatt_checker.hotels import Hotel
 
 
@@ -46,6 +46,7 @@ class HotelSummary:
     nights_unknown: int
     cheapest_points: int | None
     nights_changed: int
+    chart_range: str  # e.g. "3,000–9,000"
 
 
 @dataclass
@@ -145,7 +146,7 @@ TEMPLATE = """<!doctype html>
     <span class="top">top</span>
     <span class="unknown">? = tap to check</span>
   </p>
-  <p class="help">Tap any date to open Hyatt's award search for that night. Tap a hotel name to expand/collapse.
+  <p class="help">Tap any date to open Hyatt's award search for that night. Tap a hotel name to expand/collapse. Hyatt blocks automated price lookups (Kasada bot detection), so cells show "?" — your phone's normal session passes through.
     <button type="button" id="expandAll">expand all</button>
     <button type="button" id="collapseAll">collapse all</button>
   </p>
@@ -156,7 +157,7 @@ TEMPLATE = """<!doctype html>
       {% for r in reports %}
       <li>
         <a href="#{{ r.hotel.slug }}">{{ r.hotel.name }}</a>
-        <span class="cat">cat {{ r.hotel.category }}</span>
+        <span class="cat">cat {{ r.hotel.category }} · {{ r.summary.chart_range }}</span>
         {% if r.summary.cheapest_points %}
         <span class="min">from {{ '{:,}'.format(r.summary.cheapest_points) }}</span>
         {% endif %}
@@ -169,7 +170,7 @@ TEMPLATE = """<!doctype html>
   <details class="hotel" id="{{ r.hotel.slug }}">
     <summary>
       <h2>{{ r.hotel.name }}</h2>
-      <span class="sub">Cat {{ r.hotel.category }} · {{ r.hotel.city }}, {{ r.hotel.state }}{% if r.hotel.code %} · {{ r.hotel.code }}{% endif %}</span>
+      <span class="sub">Cat {{ r.hotel.category }} · {{ r.hotel.city }}, {{ r.hotel.state }} · {{ r.summary.chart_range }} pts{% if r.hotel.code %} · {{ r.hotel.code }}{% endif %}</span>
       {% if r.summary.cheapest_points %}
       <span class="badge">from {{ '{:,}'.format(r.summary.cheapest_points) }} pts</span>
       {% endif %}
@@ -254,10 +255,10 @@ def build_report(
             cur = date(cur.year + 1, 1, 1)
         else:
             cur = date(cur.year, cur.month + 1, 1)
-    return HotelReport(hotel=hotel, months=months, summary=_summarize(months))
+    return HotelReport(hotel=hotel, months=months, summary=_summarize(hotel, months))
 
 
-def _summarize(months: list[MonthGrid]) -> HotelSummary:
+def _summarize(hotel: Hotel, months: list[MonthGrid]) -> HotelSummary:
     known = 0
     unknown = 0
     cheapest: int | None = None
@@ -275,11 +276,16 @@ def _summarize(months: list[MonthGrid]) -> HotelSummary:
                     unknown += 1
                 if cell.delta:
                     changed += 1
+    chart = AWARD_CHART.get(hotel.category)
+    chart_range = (
+        f"{chart[0]:,}–{chart[-1]:,}" if chart else "?"
+    )
     return HotelSummary(
         nights_known=known,
         nights_unknown=unknown,
         cheapest_points=cheapest,
         nights_changed=changed,
+        chart_range=chart_range,
     )
 
 

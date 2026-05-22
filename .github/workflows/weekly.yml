@@ -12,7 +12,7 @@ on:
         default: "6"
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
@@ -23,7 +23,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -31,53 +31,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install package (with live extra)
+      - name: Install package
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[live]"
+          pip install -e .
 
-      - name: Install Chromium for Playwright
-        run: python -m playwright install --with-deps chromium
-
-      - name: Restore pricing cache (carries snapshot.json for diffs)
-        uses: actions/cache@v4
-        with:
-          path: .cache
-          key: hyatt-pricing-${{ github.run_id }}
-          restore-keys: |
-            hyatt-pricing-
-
-      - name: Drop stale per-window cache, keep snapshot.json
-        run: |
-          if [ -d .cache ]; then
-            find .cache -type f -name '*.json' ! -name 'snapshot.json' -delete
-          fi
-
-      - name: Generate report (live + discover hotels, fall back to mock)
+      - name: Generate report (deeplink calendar)
         run: |
           mkdir -p public
           FAV=""
           if [ -f data/favorites.txt ]; then FAV="--favorites data/favorites.txt"; fi
-          if hyatt-checker --source live --discover --months "${{ github.event.inputs.months || '6' }}" $FAV --debug-dir public --output public/index.html -v; then
-            echo "live ok"
-          else
-            echo "live failed, falling back to mock so the page still updates"
-            hyatt-checker --source mock --months "${{ github.event.inputs.months || '6' }}" $FAV --output public/index.html
-          fi
-          if [ -f .cache/snapshot.json ]; then cp .cache/snapshot.json public/snapshot.json; fi
-          ls -la public/ 2>/dev/null || true
-
-      - name: Commit refreshed hotels.json
-        run: |
-          if git diff --quiet -- data/hotels.json; then
-            echo "hotels.json unchanged"
-          else
-            git config user.name "hyatt-checker-bot"
-            git config user.email "bot@users.noreply.github.com"
-            git add data/hotels.json
-            git commit -m "Auto-refresh hotels.json from Hyatt discovery"
-            git push
-          fi
+          hyatt-checker --source none --months "${{ github.event.inputs.months || '6' }}" $FAV --output public/index.html -v
+          ls -la public/
 
       - uses: actions/upload-pages-artifact@v3
         with:

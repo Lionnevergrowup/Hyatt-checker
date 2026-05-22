@@ -6,7 +6,13 @@ import logging
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from hyatt_checker.client import CachingFetcher, Fetcher, MockFetcher, PlaywrightFetcher
+from hyatt_checker.client import (
+    CachingFetcher,
+    Fetcher,
+    MockFetcher,
+    NullFetcher,
+    PlaywrightFetcher,
+)
 from hyatt_checker.hotels import Hotel, filter_us_cat_1_2, load_hotels
 from hyatt_checker.report import build_report, render_html, write_report
 
@@ -27,10 +33,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Where to write the HTML report.")
     p.add_argument("--months", type=int, default=6,
                    help="How many months ahead to check (default: 6).")
-    p.add_argument("--source", choices=("mock", "live"), default="mock",
-                   help="'mock' = synthetic pricing from the award chart (no network). "
-                        "'live' = drive a real Chromium browser via Playwright "
-                        "(install with `pip install -e .[live] && playwright install chromium`).")
+    p.add_argument("--source", choices=("none", "mock", "live"), default="none",
+                   help="'none' = no fetching (recommended; renders deeplink-only "
+                        "calendar). 'mock' = synthetic prices from the award chart "
+                        "for layout testing. 'live' = drive Chromium via Playwright; "
+                        "almost always fails against Hyatt's Kasada bot detection "
+                        "unless run from a residential IP.")
     p.add_argument("--discover", action="store_true",
                    help="Before fetching, try to refresh data/hotels.json by scraping "
                         "Hyatt's hotel directory via Playwright. Best-effort: keeps "
@@ -52,10 +60,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def build_fetcher(
     source: str, cache_dir: Path | None, debug_dir: Path | None = None
 ) -> Fetcher:
-    base: Fetcher = (
-        MockFetcher() if source == "mock" else PlaywrightFetcher(debug_dir=debug_dir)
-    )
-    if cache_dir is None:
+    if source == "none":
+        base: Fetcher = NullFetcher()
+    elif source == "mock":
+        base = MockFetcher()
+    else:
+        base = PlaywrightFetcher(debug_dir=debug_dir)
+    if cache_dir is None or source == "none":
         return base
     return CachingFetcher(base, cache_dir)
 
