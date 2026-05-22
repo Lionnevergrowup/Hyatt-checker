@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -13,6 +13,7 @@ class Hotel:
     city: str
     state: str
     country: str = "US"
+    property_url: str | None = None  # canonical hyatt.com URL for the deeplink
 
     @property
     def slug(self) -> str:

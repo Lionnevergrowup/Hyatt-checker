@@ -12,33 +12,35 @@ from hyatt_checker.hotels import Hotel
 
 
 def hyatt_deeplink(hotel: Hotel, night: date) -> str:
-    """A URL that reliably gets the user to this hotel's booking page.
+    """URL that opens this hotel's Hyatt page for the given night.
 
-    Hyatt doesn't document a stable public deeplink format and the
-    obvious-looking ones (/search/hotels, /find-a-hotel) 404. The
-    booking URL `/shop/rooms/<code>` works but needs the 5-letter
-    property code, which we don't have for most hotels in
-    data/hotels.json.
+    Each hotel in data/hotels.json carries a verified property_url
+    (the canonical hyatt.com URL we resolved by Google-searching). We
+    append checkinDate/checkoutDate query params — if Hyatt parses them
+    the booking widget pre-fills, otherwise the user lands on the
+    property page and picks dates manually. On a phone with the Hyatt
+    app installed, universal links route the URL into the app where
+    the user's existing session bypasses Kasada bot detection.
 
-    So:
-      - If we have the property code, link straight to the booking
-        page with checkin/checkout filled in.
-      - Otherwise, send the user to a Google search for the hotel
-        name + month. Hyatt's property pages rank #1 for these
-        queries, so the user lands on the right page in one extra
-        tap. The Hyatt mobile app intercepts the resulting hyatt.com
-        URL via universal links, so on a logged-in phone they end up
-        in the app session that Kasada doesn't block.
+    Falls back to a Google search when no property_url is set (e.g.,
+    for hand-added hotels that haven't been resolved yet).
     """
-    from urllib.parse import quote
     checkin = night.isoformat()
     checkout = (night + timedelta(days=1)).isoformat()
+    if hotel.property_url:
+        sep = "&" if "?" in hotel.property_url else "?"
+        return (
+            f"{hotel.property_url}{sep}"
+            f"checkinDate={checkin}&checkoutDate={checkout}"
+            f"&rooms=1&adults=1&rate=woh"
+        )
     if hotel.code:
         return (
             f"https://www.hyatt.com/shop/rooms/{hotel.code}"
             f"?checkinDate={checkin}&checkoutDate={checkout}"
             f"&rooms=1&adults=1&rate=woh"
         )
+    from urllib.parse import quote
     query = f"{hotel.name} hyatt {night.strftime('%B %d %Y')} book"
     return f"https://www.google.com/search?q={quote(query)}&btnI=I"
 
