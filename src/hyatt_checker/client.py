@@ -218,16 +218,26 @@ class PlaywrightFetcher:
 
         Only writes for the first hotel that triggers a dump, so we don't
         produce 28 megabytes of nearly-identical debug bundles every run.
+        Filenames are fixed so the user can bookmark them on Pages —
+        the directory listing won't render, so a stable name is required.
         """
         if not self.debug_dir or self._debug_dumped:
             return
         try:
             self.debug_dir.mkdir(parents=True, exist_ok=True)
-            base = self.debug_dir / f"first-failure-{tag}-{hotel.slug}"
-            page.screenshot(path=str(base.with_suffix(".png")), full_page=False)
+            base = self.debug_dir / "last-block"
+            page.screenshot(path=str(base.with_suffix(".png")), full_page=True)
             (base.with_suffix(".html")).write_text(page.content(), encoding="utf-8")
-            (base.with_suffix(".url")).write_text(page.url, encoding="utf-8")
-            log.info("wrote debug bundle: %s.*", base)
+            meta = {
+                "tag": tag,
+                "hotel": hotel.name,
+                "hotel_slug": hotel.slug,
+                "page_url": page.url,
+            }
+            (base.with_suffix(".json")).write_text(
+                __import__("json").dumps(meta, indent=2), encoding="utf-8"
+            )
+            log.info("wrote debug bundle: %s.{png,html,json}", base)
             self._debug_dumped = True
         except Exception as e:
             log.debug("debug dump failed: %s", e)
