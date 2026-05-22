@@ -1,16 +1,12 @@
-name: Weekly Hyatt report (live, self-hosted)
+name: Weekly Hyatt report (live, self-hosted Windows)
 
-# Same report as the default workflow but driven by a Playwright
-# fetcher against hyatt.com — which is fronted by Kasada bot detection.
-# Datacenter IPs (including GitHub-hosted runners) get blocked, so this
-# workflow only runs on a self-hosted runner whose outbound IP is
-# residential (e.g., a Raspberry Pi on your home network).
+# Drives a real Chromium against hyatt.com through Playwright. Has to
+# run on a self-hosted runner whose outbound IP is residential
+# (Kasada blocks GitHub-hosted runners). Setup: docs/SETUP-WINDOWS.md
 #
-# Setup: see docs/SELF_HOSTED_RUNNER.md
-#
-# If no self-hosted runner is registered, jobs queue and eventually
-# expire. That's fine — the default `weekly.yml` keeps publishing the
-# deeplink-only calendar in the meantime.
+# If no self-hosted runner is online, jobs queue and eventually expire.
+# That's fine — the default `weekly.yml` keeps publishing the
+# deeplink-only calendar from a GitHub-hosted runner.
 
 on:
   schedule:
@@ -33,61 +29,74 @@ concurrency:
 
 jobs:
   build:
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install package (with live extra)
+      - name: Verify Python is on PATH
         run: |
-          python -m pip install --upgrade pip
+          python --version
+          pip --version
+
+      - name: Install / update package with live extra
+        run: |
+          pip install --upgrade pip
           pip install -e ".[live]"
 
-      - name: Install Chromium for Playwright
-        run: python -m playwright install --with-deps chromium
+      - name: Ensure Chromium is installed for Playwright
+        run: |
+          python -m playwright install chromium
 
-      - name: Restore pricing cache
+      - name: Restore pricing snapshot
         uses: actions/cache@v4
         with:
           path: .cache
-          key: hyatt-pricing-live-${{ github.run_id }}
+          key: hyatt-pricing-win-${{ github.run_id }}
           restore-keys: |
-            hyatt-pricing-live-
+            hyatt-pricing-win-
 
       - name: Drop stale per-window cache, keep snapshot.json
         run: |
-          if [ -d .cache ]; then
-            find .cache -type f -name '*.json' ! -name 'snapshot.json' -delete
-          fi
+          if (Test-Path .cache) {
+            Get-ChildItem .cache -File -Filter *.json |
+              Where-Object { $_.Name -ne 'snapshot.json' } |
+              Remove-Item
+          }
 
-      - name: Generate report (live + discover)
+      - name: Generate report (live, fall back to deeplink-only)
         run: |
-          mkdir -p public
-          FAV=""
-          if [ -f data/favorites.txt ]; then FAV="--favorites data/favorites.txt"; fi
-          hyatt-checker --source live --discover \
-            --months "${{ github.event.inputs.months || '6' }}" \
-            $FAV --debug-dir public --output public/index.html -v || \
-          hyatt-checker --source none \
-            --months "${{ github.event.inputs.months || '6' }}" \
-            $FAV --output public/index.html
-          if [ -f .cache/snapshot.json ]; then cp .cache/snapshot.json public/snapshot.json; fi
+          New-Item -ItemType Directory -Force -Path public | Out-Null
+          $fav = @()
+          if (Test-Path data\favorites.txt) { $fav = @('--favorites','data\favorites.txt') }
+          $months = "${{ github.event.inputs.months || '6' }}"
+          $live = @('--source','live','--discover','--months',$months) + $fav + @('--debug-dir','public','--output','public\index.html','-v')
+          & hyatt-checker @live
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "live failed, falling back to deeplink-only"
+            $fallback = @('--source','none','--months',$months) + $fav + @('--output','public\index.html')
+            & hyatt-checker @fallback
+          }
+          if (Test-Path .cache\snapshot.json) {
+            Copy-Item .cache\snapshot.json public\snapshot.json
+          }
+          Get-ChildItem public
 
       - name: Commit refreshed hotels.json
         run: |
-          if git diff --quiet -- data/hotels.json; then
-            echo "hotels.json unchanged"
-          else
+          git diff --quiet -- data\hotels.json
+          if ($LASTEXITCODE -ne 0) {
             git config user.name "hyatt-checker-bot"
             git config user.email "bot@users.noreply.github.com"
-            git add data/hotels.json
+            git add data\hotels.json
             git commit -m "Auto-refresh hotels.json from Hyatt discovery"
             git push
-          fi
+          } else {
+            Write-Host "hotels.json unchanged"
+          }
 
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -95,7 +104,7 @@ jobs:
 
   deploy:
     needs: build
-    runs-on: ubuntu-latest  # deploy step doesn't need the residential IP
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
