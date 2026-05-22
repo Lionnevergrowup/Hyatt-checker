@@ -12,12 +12,25 @@ from hyatt_checker.hotels import Hotel
 
 
 def hyatt_deeplink(hotel: Hotel, night: date) -> str:
-    """URL that opens Hyatt's award search for one night at this hotel.
+    """A URL that reliably gets the user to this hotel's booking page.
 
-    On a phone this opens the Hyatt app if installed, otherwise the
-    mobile site. Works whether the property `code` is filled in or not —
-    falls back to a name-based search.
+    Hyatt doesn't document a stable public deeplink format and the
+    obvious-looking ones (/search/hotels, /find-a-hotel) 404. The
+    booking URL `/shop/rooms/<code>` works but needs the 5-letter
+    property code, which we don't have for most hotels in
+    data/hotels.json.
+
+    So:
+      - If we have the property code, link straight to the booking
+        page with checkin/checkout filled in.
+      - Otherwise, send the user to a Google search for the hotel
+        name + month. Hyatt's property pages rank #1 for these
+        queries, so the user lands on the right page in one extra
+        tap. The Hyatt mobile app intercepts the resulting hyatt.com
+        URL via universal links, so on a logged-in phone they end up
+        in the app session that Kasada doesn't block.
     """
+    from urllib.parse import quote
     checkin = night.isoformat()
     checkout = (night + timedelta(days=1)).isoformat()
     if hotel.code:
@@ -26,11 +39,8 @@ def hyatt_deeplink(hotel: Hotel, night: date) -> str:
             f"?checkinDate={checkin}&checkoutDate={checkout}"
             f"&rooms=1&adults=1&rate=woh"
         )
-    from urllib.parse import quote
-    return (
-        f"https://www.hyatt.com/search/hotels?q={quote(hotel.name)}"
-        f"&checkinDate={checkin}&checkoutDate={checkout}&rate=woh"
-    )
+    query = f"{hotel.name} hyatt {night.strftime('%B %d %Y')} book"
+    return f"https://www.google.com/search?q={quote(query)}&btnI=I"
 
 
 @dataclass
