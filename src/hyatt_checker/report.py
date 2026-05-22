@@ -12,21 +12,28 @@ from hyatt_checker.hotels import Hotel
 
 
 def hyatt_deeplink(hotel: Hotel, night: date) -> str:
-    """URL that opens this hotel's Hyatt booking page for the given night.
+    """URL that opens this hotel's room-select page for the given night.
 
-    Format `https://www.hyatt.com/shop/rooms/<code>?checkinDate=...` is
-    Hyatt's actual booking entry-point (verified — the property page
-    URL drops query params). Dates carry through to the room-select
-    page; the user just toggles "Use Points" to see the award price.
+    Hyatt has no documented bookmarkable URL for "show the points
+    calendar for this hotel on this date." Every public source says you
+    have to navigate through the booking widget. So the best deeplink
+    is the property's /rooms subpage with checkinDate/checkoutDate
+    appended — sometimes Hyatt's site honors them and pre-fills the
+    widget, sometimes it ignores them and the user picks dates
+    manually in the app.
 
-    On a phone with the Hyatt app installed, universal links route the
-    URL into the app where the logged-in session passes Kasada bot
-    detection.
-
-    Falls back to a Google search when no property code is set.
+    Either way the user lands inside the booking flow for the right
+    property, one tap away from real points pricing once they toggle
+    "Use Points."
     """
     checkin = night.isoformat()
     checkout = (night + timedelta(days=1)).isoformat()
+    if hotel.property_url:
+        base = hotel.property_url.rstrip("/") + "/rooms"
+        return (
+            f"{base}?checkinDate={checkin}&checkoutDate={checkout}"
+            f"&rooms=1&adults=1"
+        )
     if hotel.code:
         return (
             f"https://www.hyatt.com/shop/rooms/{hotel.code}"
@@ -151,7 +158,7 @@ TEMPLATE = """<!doctype html>
     <span class="top">top</span>
     <span class="unknown">? = tap to check</span>
   </p>
-  <p class="help">Tap any date to open Hyatt's award search for that night. Tap a hotel name to expand/collapse. Hyatt blocks automated price lookups (Kasada bot detection), so cells show "?" — your phone's normal session passes through.
+  <p class="help">Tap any date to jump to that hotel's booking page in Hyatt. Hyatt doesn't preserve dates through deeplinks reliably — pick the date manually once the app opens. Tap a hotel name to expand/collapse.
     <button type="button" id="expandAll">expand all</button>
     <button type="button" id="collapseAll">collapse all</button>
   </p>
