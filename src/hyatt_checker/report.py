@@ -12,19 +12,14 @@ from hyatt_checker.hotels import Hotel
 
 
 def hyatt_deeplink(hotel: Hotel, night: date) -> str:
-    """URL that opens this hotel's room-select page for the given night.
+    """Direct hyatt.com URL for one night at this hotel.
 
     Hyatt has no documented bookmarkable URL for "show the points
-    calendar for this hotel on this date." Every public source says you
-    have to navigate through the booking widget. So the best deeplink
-    is the property's /rooms subpage with checkinDate/checkoutDate
-    appended — sometimes Hyatt's site honors them and pre-fills the
-    widget, sometimes it ignores them and the user picks dates
-    manually in the app.
-
-    Either way the user lands inside the booking flow for the right
-    property, one tap away from real points pricing once they toggle
-    "Use Points."
+    calendar for this hotel on this date" — every public source says
+    you have to navigate through the booking widget. This URL gets the
+    user inside the booking flow for the right property; the bridge
+    page shows the date prominently so they can punch it in by hand
+    even if Hyatt doesn't honor the query params.
     """
     checkin = night.isoformat()
     checkout = (night + timedelta(days=1)).isoformat()
@@ -43,6 +38,93 @@ def hyatt_deeplink(hotel: Hotel, night: date) -> str:
     from urllib.parse import quote
     query = f"{hotel.name} hyatt {night.strftime('%B %d %Y')} book"
     return f"https://www.google.com/search?q={quote(query)}"
+
+
+def bridge_link(hotel: Hotel, night: date) -> str:
+    """URL of the local bridge page that shows the date prominently.
+
+    Cells link here instead of straight to hyatt.com so the user sees
+    the date in big type (and can tap "Copy date") before bouncing to
+    Hyatt. Works around the fact that Hyatt's app/site doesn't
+    reliably honor checkinDate/checkoutDate query params.
+    """
+    from urllib.parse import quote
+    target = hyatt_deeplink(hotel, night)
+    return (
+        f"./go.html#n={quote(hotel.name)}"
+        f"&u={quote(target, safe='')}"
+        f"&d={night.isoformat()}"
+    )
+
+
+BRIDGE_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open in Hyatt</title>
+<style>
+  :root { color-scheme: light dark; --accent: #1a73e8; --muted: #666; --bg: #fff; --fg: #111; }
+  body { font: 16px/1.5 -apple-system, system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 1.5rem; text-align: center; background: var(--bg); color: var(--fg); }
+  h1 { margin: 0 0 0.5rem; font-size: 1.15rem; color: var(--muted); font-weight: 500; }
+  .date { font-size: 3rem; font-weight: 700; color: var(--accent); margin: 0.75rem 0 0.25rem; line-height: 1.05; }
+  .iso { color: var(--muted); font-size: 0.95rem; font-family: ui-monospace, SFMono-Regular, monospace; letter-spacing: 0.5px; }
+  .btn { display: block; width: 100%; box-sizing: border-box; padding: 1rem; margin: 0.75rem 0; text-decoration: none; border-radius: 10px; font-size: 1rem; font-weight: 600; border: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .btn:active { transform: scale(0.98); }
+  .btn.primary { background: var(--accent); color: white; }
+  .btn.secondary { background: #f0f0f0; color: #222; border: 1px solid #ddd; }
+  .note { color: var(--muted); font-size: 0.85rem; margin-top: 2rem; line-height: 1.45; }
+  .back { display: inline-block; margin-top: 1.25rem; color: var(--accent); text-decoration: none; font-size: 0.9rem; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111; --fg: #eee; --muted: #aaa; --accent: #66aaff; }
+    .btn.secondary { background: #1c1c1c; color: #ddd; border-color: #2a2a2a; }
+  }
+</style>
+</head>
+<body>
+  <h1 id="hotel">Loading…</h1>
+  <div class="date" id="date">&nbsp;</div>
+  <div class="iso" id="iso">&nbsp;</div>
+  <a class="btn primary" id="open" href="#">Open in Hyatt</a>
+  <button class="btn secondary" id="copy" type="button">Copy date</button>
+  <p class="note">Hyatt doesn't pre-fill the date through deeplinks. Tap <b>Copy date</b>, then <b>Open in Hyatt</b>; in the app, tap the date picker and paste (or just type the date you see above).</p>
+  <a class="back" href="./">← back to calendar</a>
+  <script>
+    const params = new URLSearchParams(location.hash.slice(1));
+    const name = params.get('n') || '(unknown hotel)';
+    const url = params.get('u') || '#';
+    const iso = params.get('d') || '';
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    document.getElementById('hotel').textContent = name;
+    document.getElementById('open').href = url;
+    document.getElementById('iso').textContent = iso;
+    if (iso) {
+      const [y, m, d] = iso.split('-').map(Number);
+      const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+      document.getElementById('date').textContent =
+        weekdays[wd] + ' ' + months[m - 1] + ' ' + d + ', ' + y;
+    }
+    document.getElementById('copy').addEventListener('click', async () => {
+      const b = document.getElementById('copy');
+      const orig = b.textContent;
+      try {
+        await navigator.clipboard.writeText(iso);
+        b.textContent = 'Copied ' + iso;
+      } catch (e) {
+        b.textContent = 'Copy failed — ' + iso;
+      }
+      setTimeout(() => { b.textContent = orig; }, 2000);
+    });
+  </script>
+</body>
+</html>
+"""
+
+
+def write_bridge_html(out_dir: Path) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "go.html").write_text(BRIDGE_HTML, encoding="utf-8")
 
 
 @dataclass
@@ -158,7 +240,7 @@ TEMPLATE = """<!doctype html>
     <span class="top">top</span>
     <span class="unknown">? = tap to check</span>
   </p>
-  <p class="help">Tap any date to jump to that hotel's booking page in Hyatt. Hyatt doesn't preserve dates through deeplinks reliably — pick the date manually once the app opens. Tap a hotel name to expand/collapse.
+  <p class="help">Tap any date to see it in big type with a "Copy date" button, then jump to Hyatt. (Hyatt's deeplinks don't pre-fill dates — you'll need to punch it in once the app opens.) Tap a hotel name to expand/collapse.
     <button type="button" id="expandAll">expand all</button>
     <button type="button" id="collapseAll">collapse all</button>
   </p>
@@ -332,7 +414,7 @@ def _build_month(
                     day=day,
                     points=points,
                     tier=tier,
-                    href=hyatt_deeplink(hotel, d),
+                    href=bridge_link(hotel, d),
                     delta=delta,
                 )
             )

@@ -14,7 +14,7 @@ from hyatt_checker.client import (
     PlaywrightFetcher,
 )
 from hyatt_checker.hotels import Hotel, filter_us_cat_1_2, load_hotels
-from hyatt_checker.report import build_report, render_html, write_report
+from hyatt_checker.report import build_report, render_html, write_bridge_html, write_report
 
 DEFAULT_HOTELS = Path("data/hotels.json")
 DEFAULT_OUTPUT = Path("output/report.html")
@@ -165,8 +165,9 @@ def main(argv: list[str] | None = None) -> int:
         source=args.source,
     )
     write_report(html, args.output)
+    write_bridge_html(args.output.parent)
     save_snapshot(snapshot_path, reports)
-    log.info("wrote %s", args.output)
+    log.info("wrote %s and %s/go.html", args.output, args.output.parent)
     return 0
 
 
