@@ -12,37 +12,30 @@ from hyatt_checker.hotels import Hotel
 
 
 def hyatt_deeplink(hotel: Hotel, night: date) -> str:
-    """URL that opens this hotel's Hyatt page for the given night.
+    """URL that opens this hotel's Hyatt booking page for the given night.
 
-    Each hotel in data/hotels.json carries a verified property_url
-    (the canonical hyatt.com URL we resolved by Google-searching). We
-    append checkinDate/checkoutDate query params — if Hyatt parses them
-    the booking widget pre-fills, otherwise the user lands on the
-    property page and picks dates manually. On a phone with the Hyatt
-    app installed, universal links route the URL into the app where
-    the user's existing session bypasses Kasada bot detection.
+    Format `https://www.hyatt.com/shop/rooms/<code>?checkinDate=...` is
+    Hyatt's actual booking entry-point (verified — the property page
+    URL drops query params). Dates carry through to the room-select
+    page; the user just toggles "Use Points" to see the award price.
 
-    Falls back to a Google search when no property_url is set (e.g.,
-    for hand-added hotels that haven't been resolved yet).
+    On a phone with the Hyatt app installed, universal links route the
+    URL into the app where the logged-in session passes Kasada bot
+    detection.
+
+    Falls back to a Google search when no property code is set.
     """
     checkin = night.isoformat()
     checkout = (night + timedelta(days=1)).isoformat()
-    if hotel.property_url:
-        sep = "&" if "?" in hotel.property_url else "?"
-        return (
-            f"{hotel.property_url}{sep}"
-            f"checkinDate={checkin}&checkoutDate={checkout}"
-            f"&rooms=1&adults=1&rate=woh"
-        )
     if hotel.code:
         return (
             f"https://www.hyatt.com/shop/rooms/{hotel.code}"
             f"?checkinDate={checkin}&checkoutDate={checkout}"
-            f"&rooms=1&adults=1&rate=woh"
+            f"&rooms=1&adults=1"
         )
     from urllib.parse import quote
     query = f"{hotel.name} hyatt {night.strftime('%B %d %Y')} book"
-    return f"https://www.google.com/search?q={quote(query)}&btnI=I"
+    return f"https://www.google.com/search?q={quote(query)}"
 
 
 @dataclass
