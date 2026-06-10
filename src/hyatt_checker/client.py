@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, replace
@@ -97,6 +98,44 @@ class NullFetcher:
         return _blank_window(start, end)
 
 
+def proxy_config_from_env() -> dict | None:
+    """Residential proxy settings, read from env vars.
+
+    Set HYATT_PROXY_SERVER (e.g. "http://geo.iproyal.com:12321"), and
+    optionally HYATT_PROXY_USERNAME / HYATT_PROXY_PASSWORD. In CI these
+    come from GitHub Actions secrets. When unset, Playwright connects
+    directly — fine from a residential machine, blocked by Kasada from
+    datacenter IPs.
+    """
+    server = os.environ.get("HYATT_PROXY_SERVER", "").strip()
+    if not server:
+        return None
+    cfg: dict = {"server": server}
+    user = os.environ.get("HYATT_PROXY_USERNAME", "").strip()
+    pwd = os.environ.get("HYATT_PROXY_PASSWORD", "").strip()
+    if user:
+        cfg["username"] = user
+    if pwd:
+        cfg["password"] = pwd
+    return cfg
+
+
+# Resource types that aren't needed to capture pricing JSON. Blocking
+# them cuts per-page transfer from ~4MB to well under 1MB, which
+# matters when traffic is metered through a paid residential proxy.
+_BLOCKED_RESOURCE_TYPES = {"image", "media", "font"}
+
+
+def _install_resource_blocking(ctx) -> None:
+    def _route(route):
+        if route.request.resource_type in _BLOCKED_RESOURCE_TYPES:
+            route.abort()
+        else:
+            route.continue_()
+
+    ctx.route("**/*", _route)
+
+
 class PlaywrightFetcher:
     """Drives a real Chromium browser through Hyatt's award search.
 
@@ -177,9 +216,13 @@ class PlaywrightFetcher:
     def fetch(self, hotel: Hotel, start: date, end: date) -> list[NightPrice]:
         from playwright.sync_api import sync_playwright  # lazy import
 
+        proxy = proxy_config_from_env()
+        if proxy:
+            log.info("routing through proxy %s", proxy["server"])
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=self.headless,
+                proxy=proxy,
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
@@ -194,6 +237,7 @@ class PlaywrightFetcher:
                 extra_http_headers=self.EXTRA_HEADERS,
             )
             ctx.add_init_script(self.STEALTH_JS)
+            _install_resource_blocking(ctx)
             page = ctx.new_page()
             page.set_default_timeout(self.nav_timeout_ms)
 

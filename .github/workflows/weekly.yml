@@ -1,5 +1,15 @@
 name: Weekly Hyatt report
 
+# Two modes, decided automatically:
+#   - If the HYATT_PROXY_SERVER secret is set, runs --source live with
+#     Playwright routed through your residential proxy. Real points data.
+#   - Otherwise renders the deeplink-only calendar (no fetching).
+#
+# To enable live mode: Settings → Secrets and variables → Actions →
+# New repository secret. Add HYATT_PROXY_SERVER (and, if your provider
+# uses them, HYATT_PROXY_USERNAME / HYATT_PROXY_PASSWORD).
+# See docs/PROXY.md for choosing a provider.
+
 on:
   schedule:
     # Sunday 13:00 UTC = ~8am US Central. Adjust to taste.
@@ -12,7 +22,7 @@ on:
         default: "6"
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -20,10 +30,15 @@ concurrency:
   group: "pages"
   cancel-in-progress: false
 
+env:
+  HYATT_PROXY_SERVER: ${{ secrets.HYATT_PROXY_SERVER }}
+  HYATT_PROXY_USERNAME: ${{ secrets.HYATT_PROXY_USERNAME }}
+  HYATT_PROXY_PASSWORD: ${{ secrets.HYATT_PROXY_PASSWORD }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -36,13 +51,61 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
-      - name: Generate report (deeplink calendar)
+      - name: Install live extra + Chromium (proxy configured)
+        if: env.HYATT_PROXY_SERVER != ''
+        run: |
+          pip install -e ".[live]"
+          python -m playwright install --with-deps chromium
+
+      - name: Restore pricing cache
+        if: env.HYATT_PROXY_SERVER != ''
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: hyatt-pricing-${{ github.run_id }}
+          restore-keys: |
+            hyatt-pricing-
+
+      - name: Drop stale per-window cache, keep snapshot.json
+        if: env.HYATT_PROXY_SERVER != ''
+        run: |
+          if [ -d .cache ]; then
+            find .cache -type f -name '*.json' ! -name 'snapshot.json' -delete
+          fi
+
+      - name: Generate report
         run: |
           mkdir -p public
           FAV=""
           if [ -f data/favorites.txt ]; then FAV="--favorites data/favorites.txt"; fi
-          hyatt-checker --source none --months "${{ github.event.inputs.months || '6' }}" $FAV --output public/index.html -v
+          MONTHS="${{ github.event.inputs.months || '6' }}"
+          if [ -n "$HYATT_PROXY_SERVER" ]; then
+            echo "proxy configured — attempting live fetch"
+            if hyatt-checker --source live --discover --months "$MONTHS" $FAV --debug-dir public --output public/index.html -v; then
+              echo "live ok"
+            else
+              echo "live failed, falling back to deeplink-only"
+              hyatt-checker --source none --months "$MONTHS" $FAV --output public/index.html
+            fi
+            if [ -f .cache/snapshot.json ]; then cp .cache/snapshot.json public/snapshot.json; fi
+          else
+            echo "no proxy secret — deeplink-only calendar"
+            hyatt-checker --source none --months "$MONTHS" $FAV --output public/index.html -v
+          fi
           ls -la public/
+
+      - name: Commit refreshed hotels.json
+        if: env.HYATT_PROXY_SERVER != ''
+        run: |
+          if git diff --quiet -- data/hotels.json; then
+            echo "hotels.json unchanged"
+          else
+            git config user.name "hyatt-checker-bot"
+            git config user.email "bot@users.noreply.github.com"
+            git add data/hotels.json
+            git commit -m "Auto-refresh hotels.json from Hyatt discovery"
+            git push
+          fi
 
       - uses: actions/upload-pages-artifact@v3
         with:

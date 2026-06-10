@@ -34,10 +34,13 @@ SEARCH_URLS = [
 def discover_us_cat_1_2(headless: bool = True, timeout_ms: int = 30_000) -> list[Hotel]:
     from playwright.sync_api import sync_playwright
 
+    from hyatt_checker.client import proxy_config_from_env
+
     captured: list[object] = []
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=headless,
+            proxy=proxy_config_from_env(),
             args=["--disable-blink-features=AutomationControlled"],
         )
         ctx = browser.new_context(
