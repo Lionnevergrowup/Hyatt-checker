@@ -32,10 +32,11 @@ jobs:
     defaults:
       run:
         # Self-hosted Windows defaults to Restricted execution policy,
-        # which blocks the temp .ps1 files Actions writes per-step. Use
-        # an explicit invocation that bypasses policy for this process
-        # only — no permanent system change required.
-        shell: 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "{0}"'
+        # which blocks the temp script Actions writes per step. Pair
+        # -ExecutionPolicy Bypass with dot-sourcing (. '{0}') instead of
+        # -File, since Actions writes the temp file without a .ps1
+        # extension and -File rejects extensions other than .ps1.
+        shell: "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command \". '{0}'\""
     steps:
       - uses: actions/checkout@v4
 
