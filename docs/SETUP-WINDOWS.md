@@ -88,28 +88,39 @@ So you don't have to remember to launch `run.cmd` every time:
 
 The runner now starts automatically every time you turn on your PC.
 
-## 7. Turn on the live workflow
+## 7. Make the desktop shortcut
 
-1. On your phone, open the repo → **Actions** tab.
-2. Pick **Weekly Hyatt report (live, self-hosted Windows)** on the
-   left.
-3. Tap **Run workflow** → **Run workflow**.
-4. Make sure your PC is on and logged in. The runner picks up the
-   job (you can see it light up green at Settings → Actions →
-   Runners).
-5. After 15–30 minutes the run finishes; reload
-   `https://lionnevergrowup.github.io/Hyatt-checker/` and the cells
-   should now show real point prices instead of `?`.
+Triggers a refresh by double-clicking an icon on your Desktop, no
+phone/browser required.
 
-## How it works day-to-day
+In PowerShell:
 
-- The schedule runs every Sunday at 13:00 UTC. If your PC is on
-  Sunday morning (US Central time), the runner picks it up.
-- If your PC is off when the schedule fires, the job queues. Next
-  time you turn the PC on, the runner notices and runs it (the
-  published page just shows a slightly older "Updated" timestamp).
-- You can always force a refresh from your phone: Actions → Run
-  workflow.
+```powershell
+cd $env:USERPROFILE\Hyatt-checker
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-hyatt.ps1
+```
+
+First run prompts for a GitHub Personal Access Token (one-time):
+
+1. Open the URL the script shows you in any browser.
+2. Pick a long expiration (1 year is fine).
+3. Make sure the **`workflow`** scope is checked.
+4. Click **Generate token**, copy it (starts with `ghp_`).
+5. Paste it back in PowerShell.
+
+The script saves the token to `%USERPROFILE%\.hyatt-pat` and creates
+**Run Hyatt** on your Desktop.
+
+## 8. Use it
+
+- Turn on the PC (runner starts automatically as a service).
+- **Double-click "Run Hyatt"** on the Desktop whenever you want fresh
+  data. The workflow fires immediately; the runner picks it up.
+- Track progress: open the repo's Actions tab on your phone.
+- After ~20–30 minutes, refresh
+  `https://lionnevergrowup.github.io/Hyatt-checker/` — cells now show
+  real point prices instead of `?`.
+- If you don't trigger it, nothing runs (no auto-schedule).
 
 ## If something breaks
 

@@ -31,7 +31,11 @@ jobs:
     timeout-minutes: 60
     defaults:
       run:
-        shell: powershell
+        # Self-hosted Windows defaults to Restricted execution policy,
+        # which blocks the temp .ps1 files Actions writes per-step. Use
+        # an explicit invocation that bypasses policy for this process
+        # only — no permanent system change required.
+        shell: 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "{0}"'
     steps:
       - uses: actions/checkout@v4
 

@@ -117,19 +117,20 @@ python -m playwright install --with-deps chromium
 
 This downloads Chromium into a cache the workflow can reuse.
 
-## 7. Turn on the live workflow
+## 7. Trigger a refresh
 
-1. On your phone, open the repo → **Actions** → **Weekly Hyatt report
-   (live, self-hosted)**.
-2. Tap **Run workflow** → **Run workflow**.
-3. Watch the run progress. It should pick up the runner on your Pi
-   (visible at Settings → Actions → Runners — green dot = online).
-4. After ~15–30 minutes (Playwright is slow against Hyatt), the page
-   at `https://lionnevergrowup.github.io/Hyatt-checker/` should show
-   real point prices, not `?`.
+There is no auto-schedule — the workflow runs only when you ask.
 
-The schedule runs every Sunday at 13:00 UTC. The Pi just needs to be
-plugged in.
+- **From any browser/phone**: open the repo → **Actions** → **Weekly
+  Hyatt report (live, self-hosted Windows)** → tap **Run workflow**.
+- **From the Pi (or any computer)**: run `scripts/run-hyatt.ps1`
+  (PowerShell) or call the GitHub API directly with a Personal
+  Access Token. See `scripts/run-hyatt.ps1` for the request shape;
+  on Linux/macOS you can replicate it with `curl -X POST`.
+
+After ~15–30 minutes (Playwright is slow against Hyatt), the page at
+`https://lionnevergrowup.github.io/Hyatt-checker/` should show real
+point prices, not `?`.
 
 ## Troubleshooting
 
