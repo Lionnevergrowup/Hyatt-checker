@@ -11,10 +11,7 @@ name: Weekly Hyatt report
 # See docs/PROXY.md for choosing a provider.
 
 on:
-  schedule:
-    # Sunday 13:00 UTC = ~8am US Central. Adjust to taste.
-    - cron: "0 13 * * 0"
-  workflow_dispatch:  # button on the Actions tab; tappable from the GitHub mobile app
+  workflow_dispatch:  # manual only — desktop shortcut + GitHub Actions UI
     inputs:
       months:
         description: "Months ahead to fetch"

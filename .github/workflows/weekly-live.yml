@@ -9,8 +9,6 @@ name: Weekly Hyatt report (live, self-hosted Windows)
 # deeplink-only calendar from a GitHub-hosted runner.
 
 on:
-  schedule:
-    - cron: "0 13 * * 0"  # Sunday 13:00 UTC
   workflow_dispatch:
     inputs:
       months:
